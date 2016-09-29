@@ -90,7 +90,7 @@ quotes = quotes:byte(1)
 local function split(line)
         local ir, ln, CODE, A, B, C, comment = 
                 string.match(line,
-                        "%s+(%d+)%s+([^%s]+)%s+(%a+)%s+([-%d]+)%s+([-%d]+)%s*([-%d]*)%s*;?%s*(.*)")
+                        "%s+(%d+)%s+%[(%d+)%]%s+(%a+)%s+([-%d]+)%s+([-%d]+)%s*([-%d]*)%s*;?%s*(.*)")
         if not ir then
                 return nil
         end
@@ -120,6 +120,24 @@ local ignore_map = {}
 
 for _, v in pairs(ignore) do
         ignore_map[v] = true
+end
+
+local cache = {}
+
+local function localname(path, linenr, module)
+        local n = cache[path]
+        if not n then
+                n = {}
+                local i = 1
+                for l in io.lines(path) do
+                        n[i] = l
+                        i = i + 1
+                end
+                cache[path] = n
+        end
+        linenr = tonumber(linenr)
+        local stmt = assert(n[linenr])
+        return assert(string.match(stmt, "%s*local%s+([^%s]+)"))
 end
 
 local function lintone(filename)
@@ -158,19 +176,22 @@ local function lintone(filename)
                                                 --CALL
                                                 i = i + 1
                                                 l = lines[i]
-                                                info = split(l)
-                                                assert(info.CODE == "CALL")
+                                                local callinfo = split(l)
+                                                assert(callinfo.CODE == "CALL")
                                                 local mode, path = checkmodule(name)
                                                 if mode == "lua" then
-                                                        local exist
-                                                        module_reg[name] = info.A
-                                                        module_reg[info.A] = name
-                                                        module[info.A] = compile(path, name)
+                                                        --print_info("require", filename, info.A, info.ln)
+                                                        local var = localname(filename, info.ln, name)
+                                                        module_reg[var] = callinfo.A
+                                                        module_reg[callinfo.A] = var
+                                                        module[callinfo.A] = compile(path, name)
                                                         if not ONCE[name] then 
                                                                 lintone(path)
                                                                 ONCE[name] = true
                                                         end
                                                 elseif mode == "so" then
+                                                        local var = localname(filename, info.ln, name)
+                                                        module_reg[var] = "so"
                                                         print_info(string.format("[INFO] file '%s:%s' require module:%s share object skip aynalzer",
                                                                 filename, info.ln, name, path))
                                                 elseif mode == "no" then
@@ -184,7 +205,7 @@ local function lintone(filename)
                                         end
                                 else
                                         local reg = module_reg[tbl]
-                                        if reg then
+                                        if reg and reg ~= "so" then
                                                 local obj = assert(module[reg])
                                                 if not obj[field] then
                                                         print_err(string.format("[WARNNING] file '%s:%s' Module '%s' has no field '%s'",
@@ -205,8 +226,4 @@ local function lintone(filename)
 end
 
 lintone(ENTRY)
---compile("src/server.lua")
---require "main"
-
-
 
